@@ -311,3 +311,35 @@ def create_ai_dock(main_window=None) -> AIDockWidget:
     """
     dock = AIDockWidget(main_window)
     return dock
+
+
+def ensure_dock_created() -> Optional[AIDockWidget]:
+    """
+    ایجاد Dock Widget برای AI Assistant
+    این تابع فقط یک بار Dock را ایجاد می‌کند و از ایجاد تکراری جلوگیری می‌کند.
+    
+    Returns:
+        AIDockWidget: نمونه Dock یا None اگر موفق نباشد
+    """
+    import FreeCADGui as Gui
+    
+    mw = Gui.getMainWindow()
+    if not mw:
+        logger.error("MainWindow not found")
+        return None
+    
+    # بررسی آیا Dock از قبل وجود دارد
+    for dock in mw.findChildren(QDockWidget):
+        if dock.objectName() == "AIDockWidget":
+            logger.debug("AI Dock already exists, returning existing instance")
+            return dock
+    
+    # ایجاد Dock جدید
+    try:
+        dock = create_ai_dock(mw)
+        mw.addDockWidget(Qt.RightDockWidgetArea, dock)
+        logger.info("AI Dock created and added to MainWindow")
+        return dock
+    except Exception as e:
+        logger.error(f"Failed to create AI Dock: {e}", exc_info=True)
+        return None
