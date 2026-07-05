@@ -1,169 +1,169 @@
 """
 FreeCAD AI Assistant - InitGui.py
+Workbench registration for FreeCAD
 
 این فایل Workbench افزونه را در FreeCAD ثبت می‌کند.
+نسخه ساده‌سازی شده برای جلوگیری از خطاهای startup
 """
 
-import logging
+import FreeCAD
+import FreeCADGui as Gui
 
-logger = logging.getLogger("FreeCAD_AI")
 
-
-class AIAssistantWorkbench:
+class AIAssistantWorkbench(Workbench):
     """
-    کلاس Workbench دستیار هوشمند FreeCAD
+    AI Assistant Workbench for FreeCAD
     
+    This workbench provides a natural language interface to FreeCAD,
+    allowing users to create and modify 3D models using AI.
+    
+    کلاس Workbench دستیار هوشمند FreeCAD
     این کلاس یک Workbench جدید در FreeCAD ثبت می‌کند که
     شامل پنل چت و ابزارهای AI است.
     """
     
-    def __init__(self):
-        """راه‌اندازی Workbench"""
-        self.name = "AIAssistant"
-        self.iconText = "🤖"
-        self.tooltip = "FreeCAD AI Assistant - Natural Language to 3D Modeling"
-        
-        # آیکون Workbench (در آینده اضافه می‌شود)
-        self.icon = ":/icons/freecad_ai.svg"
-    
-    def GetClassName(self):
-        """
-        دریافت نام کلاس GUI
-        
-        Returns:
-            str: نام کلاس
-        """
-        return "Gui::PythonWorkbench"
+    ClassName = "AIAssistantWorkbench"
+    Icon = """
+        /* XPM */
+        static char * icon_xpm[] = {
+        "16 16 4 1",
+        "c None",
+        ". #A0A0A0",
+        "X #404040",
+        "o #FFFFFF",
+        "                ",
+        "   .XXXXXXX.    ",
+        "  .XXXXXXXXX.   ",
+        " .XXXXXXXXXXX.  ",
+        " .XXXXXXXXXXX.  ",
+        " .XXXoXXXoXXX.  ",
+        " .XXXXXXXXXXX.  ",
+        " .XXXXXXXXXXX.  ",
+        " .XXXXXXXXXXX.  ",
+        " .XXXXXXXXXXX.  ",
+        " .XXXXXXXXXXX.  ",
+        " .XXXXXXXXXXX.  ",
+        "  'XXXXXXXXX'   ",
+        "    'XXXXX'     ",
+        "                ",
+        "                "};
+    """
+    MenuText = "AI Assistant"
+    ToolTip = "FreeCAD AI Assistant - Natural Language to 3D Modeling"
     
     def Initialize(self):
         """
-        راه‌اندازی Workbench
+        Initialize the workbench
         
-        این تابع توسط FreeCAD فراخوانی می‌شود.
+        This method is called when FreeCAD starts up.
+        We keep it minimal to avoid startup errors.
+        
+        راه‌اندازی Workbench - این تابع توسط FreeCAD فراخوانی می‌شود.
         """
-        logger.info("Initializing AI Assistant Workbench")
+        # Define commands (will be implemented in future steps)
+        # For now, we just define placeholders
+        # تعریف دستورها (در مراحل بعدی پیاده‌سازی می‌شوند)
+        commands = [
+            "AI_Chat",
+            "AI_Settings"
+        ]
         
-        try:
-            # ایمپورت ماژول‌های اصلی
-            from freecad_ai.ui.panel import create_ai_dock
-            from freecad_ai.core.config import get_config
-            from freecad_ai.listeners.event_listeners import get_context_listener
-            from freecad_ai.context.manager import get_context_manager
-            
-            # بارگذاری پیکربندی
-            config = get_config()
-            logger.info(f"Configuration loaded: {config.default_provider}")
-            
-            # ایجاد Dock Widget
-            import FreeCADGui as Gui
-            mw = Gui.getMainWindow()
-            
-            if mw:
-                self.dock = create_ai_dock(mw)
-                
-                # اضافه کردن به MainWindow
-                mw.addDockWidget(2, self.dock)  # Right dock area
-                
-                logger.info("AI Assistant Dock created and added to MainWindow")
-            
-            # فعال کردن Event Listeners
-            context_manager = get_context_manager()
-            listener = get_context_listener(context_manager)
-            listener.enable()
-            
-            logger.info("Event listeners enabled")
-            
-        except Exception as e:
-            logger.error(f"Failed to initialize Workbench: {e}", exc_info=True)
+        # Create toolbar
+        # ایجاد نوار ابزار
+        self.appendToolbar("AI Assistant", commands)
+        
+        # Create menu
+        # ایجاد منو
+        self.appendMenu("AI Assistant", commands)
+        
+        FreeCAD.Console.PrintMessage("AI Assistant Workbench initialized\n")
     
     def Activated(self):
         """
-        فراخوانی هنگام فعال شدن Workbench
+        Called when workbench is activated
         
+        This is the best place to initialize the UI panel lazily.
+        
+        فراخوانی هنگام فعال شدن Workbench
         این تابع وقتی کاربر Workbench را انتخاب می‌کند اجرا می‌شود.
         """
-        logger.info("AI Assistant Workbench activated")
+        FreeCAD.Console.PrintMessage("AI Assistant Workbench activated\n")
         
-        # نمایش Dock
+        # Lazy loading of the UI panel to avoid import errors at startup
+        # بارگذاری تنبلانه پنل UI برای جلوگیری از خطاهای ایمپورت هنگام startup
         try:
-            import FreeCADGui as Gui
-            mw = Gui.getMainWindow()
-            
-            if mw and hasattr(self, 'dock'):
-                self.dock.show()
-                
+            from freecad_ai.ui.panel import ensure_dock_created
+            ensure_dock_created()
         except Exception as e:
-            logger.error(f"Error in Activated: {e}")
+            FreeCAD.Console.PrintError(f"Failed to create AI Assistant dock: {e}\n")
     
     def Deactivated(self):
         """
-        فراخوانی هنگام غیرفعال شدن Workbench
+        Called when workbench is deactivated
         
+        فراخوانی هنگام غیرفعال شدن Workbench
         این تابع وقتی کاربر به Workbench دیگری می‌رود اجرا می‌شود.
         """
-        logger.debug("AI Assistant Workbench deactivated")
+        FreeCAD.Console.PrintMessage("AI Assistant Workbench deactivated\n")
+    
+    def GetClassName(self):
+        """
+        Return the class name
+        
+        Returns:
+            str: The GUI class name
+            
+        دریافت نام کلاس GUI
+        """
+        return "Gui::PythonWorkbench"
     
     def ContextMenu(self, recipient):
         """
-        ایجاد منوی Context
+        Create context menu
         
         Args:
-            recipient: دریافت‌کننده منو
+            recipient: The recipient of the menu ("view" or "tree")
+            
+        ایجاد منوی Context
         """
+        # Add context menu items if needed
         pass
     
     def GetToolbars(self):
         """
-        تعریف Toolbarها
+        Return list of toolbars
         
         Returns:
-            tuple: لیست Toolbarها
+            tuple: List of toolbars
+            
+        تعریف Toolbarها
         """
         return (
             ("&AI Assistant", [
                 "AI_Chat",
-                "AI_Settings",
-                "AI_Help"
+                "AI_Settings"
             ])
         )
     
     def GetMenus(self):
         """
-        تعریف Menuها
+        Return list of menus
         
         Returns:
-            tuple: لیست Menuها
+            tuple: List of menus
+            
+        تعریف Menuها
         """
         return (
             ("&AI Assistant", [
                 "AI_Chat",
-                "AI_Settings",
-                "AI_Help"
+                "AI_Settings"
             ])
         )
 
 
+# Register workbench
 # ثبت Workbench در FreeCAD
-def register_workbench():
-    """
-    ثبت Workbench در FreeCAD
-    
-    این تابع باید از داخل FreeCAD فراخوانی شود.
-    """
-    import FreeCADGui as Gui
-    
-    # ایجاد نمونه Workbench
-    workbench = AIAssistantWorkbench()
-    
-    # ثبت در FreeCAD
-    Gui.addWorkbench(workbench)
-    
-    logger.info("AI Assistant Workbench registered successfully")
-
-
-# ثبت خودکار Workbench هنگام لود شدن توسط FreeCAD
 # این کد بلافاصله پس از ایمپورت فایل اجرا می‌شود
-try:
-    register_workbench()
-except Exception as e:
-    logger.error(f"Failed to register workbench automatically: {e}", exc_info=True)
+Gui.addWorkbench(AIAssistantWorkbench())
+FreeCAD.Console.PrintMessage("AI Assistant Workbench registered\n")
