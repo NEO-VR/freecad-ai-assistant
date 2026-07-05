@@ -161,10 +161,9 @@ def register_workbench():
     logger.info("AI Assistant Workbench registered successfully")
 
 
-# اجرای خودکار هنگام لود شدن
-if __name__ != "__main__":
-    # در محیط FreeCAD
-    try:
-        register_workbench()
-    except Exception as e:
-        logger.error(f"Failed to register workbench: {e}")
+# ثبت خودکار Workbench هنگام لود شدن توسط FreeCAD
+# این کد بلافاصله پس از ایمپورت فایل اجرا می‌شود
+try:
+    register_workbench()
+except Exception as e:
+    logger.error(f"Failed to register workbench automatically: {e}", exc_info=True)
