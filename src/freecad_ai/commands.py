@@ -10,7 +10,7 @@ class AI_Chat:
     
     def GetResources(self):
         return {
-            'Pixmap': 'help-contents',  # آیکون استاندارد راهنما
+            'Pixmap': '',  # آیکون خالی تا زمانی که آیکون سفارشی اضافه شود
             'MenuText': 'AI Chat',
             'ToolTip': 'Open AI Chat Panel'
         }
@@ -34,7 +34,7 @@ class AI_Settings:
     
     def GetResources(self):
         return {
-            'Pixmap': 'preferences-system',  # آیکون استاندارد تنظیمات
+            'Pixmap': '',  # آیکون خالی تا زمانی که آیکون سفارشی اضافه شود
             'MenuText': 'AI Settings',
             'ToolTip': 'Open AI Settings'
         }
