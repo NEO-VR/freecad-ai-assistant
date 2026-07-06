@@ -8,7 +8,7 @@ __version__ = "0.1.0"
 __author__ = "FreeCAD AI Team"
 __description__ = "AI Assistant for FreeCAD - Natural Language to 3D Modeling"
 
-from .core.config import Config, get_config, reload_config
+from .core.config import Config, get_config
 from .llm.abstraction import (
     LLMProvider, 
     ClaudeProvider, 
