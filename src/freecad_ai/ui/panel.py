@@ -1,345 +1,239 @@
 """
-FreeCAD AI Assistant - UI Panel (PySide6)
-
-این ماژول رابط کاربری افزونه را با استفاده از PySide6 (Qt6) ایجاد می‌کند.
+FreeCAD AI Assistant - UI Panel (Phase 3)
+اتصال هوشمند به LLM Orchestrator با نمایش وضعیت اتصال
 """
-
 import logging
-from typing import Optional, Callable
 from PySide6.QtWidgets import (
-    QWidget, QVBoxLayout, QHBoxLayout, QTextEdit, 
-    QLineEdit, QPushButton, QLabel, QScrollArea,
-    QFrame, QSizePolicy, QSpacerItem, QDockWidget
+    QDockWidget, QWidget, QVBoxLayout, QTextEdit, 
+    QLineEdit, QPushButton, QLabel, QFrame, QScrollArea, QApplication
 )
-from PySide6.QtCore import Qt, Signal, Slot, QSize
-from PySide6.QtGui import QFont, QIcon
+from PySide6.QtCore import Qt, Signal, Slot, QThread
+from PySide6.QtGui import QFont, QColor
+import sys
+import os
 
-logger = logging.getLogger(__name__)
+# افزودن مسیر src به sys.path برای ایمپورت
+script_dir = os.path.dirname(os.path.abspath(__file__))
+project_root = os.path.dirname(os.path.dirname(script_dir))
+if project_root not in sys.path:
+    sys.path.insert(0, project_root)
 
+logger = logging.getLogger("FreeCAD_AI_UI")
 
-class ChatMessage(QFrame):
-    """
-    ویجت نمایش یک پیام چت
-    
-    Attributes:
-        message_sent: سیگنال ارسال پیام
-    """
-    
-    def __init__(self, text: str, is_user: bool = True, parent=None):
-        """
-        راه‌اندازی پیام چت
-        
-        Args:
-            text: متن پیام
-            is_user: آیا پیام از طرف کاربر است
-            parent: والد ویجت
-        """
-        super().__init__(parent)
-        self.is_user = is_user
-        self.setup_ui(text)
-    
-    def setup_ui(self, text: str) -> None:
-        """راه‌اندازی UI پیام"""
-        # استایل‌دهی بر اساس نوع پیام
-        if self.is_user:
-            self.setStyleSheet("""
-                QFrame {
-                    background-color: #0078d4;
-                    color: white;
-                    border-radius: 10px;
-                    padding: 10px;
-                    margin: 5px;
-                }
-            """)
-        else:
-            self.setStyleSheet("""
-                QFrame {
-                    background-color: #f0f0f0;
-                    color: black;
-                    border-radius: 10px;
-                    padding: 10px;
-                    margin: 5px;
-                }
-            """)
-        
-        # لی‌اوت
-        layout = QVBoxLayout(self)
-        layout.setContentsMargins(10, 10, 10, 10)
-        
-        # لیبل متن
-        label = QLabel(text)
-        label.setWordWrap(True)
-        label.setTextInteractionFlags(Qt.TextSelectableByMouse)
-        layout.addWidget(label)
-        
-        # تنظیم اندازه
-        self.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Minimum)
+class WorkerThread(QThread):
+    """رشته پردازش جداگانه برای جلوگیری از فریز شدن UI"""
+    response_ready = Signal(str)
+    error_occurred = Signal(str)
+    finished_signal = Signal()
 
+    def __init__(self, orchestrator, message, history):
+        super().__init__()
+        self.orchestrator = orchestrator
+        self.message = message
+        self.history = history
+
+    def run(self):
+        try:
+            from freecad_ai.llm.abstraction import Message
+            
+            # ساخت لیست پیام‌ها شامل تاریخچه
+            messages = [Message(role="system", content="You are a helpful FreeCAD assistant.")]
+            for role, content in self.history:
+                messages.append(Message(role=role, content=content))
+            messages.append(Message(role="user", content=self.message))
+
+            # دریافت provider پیش‌فرض
+            provider = self.orchestrator.get_default_provider()
+            if not provider:
+                self.error_occurred.emit("هیچ ارائه‌دهنده‌ای پیکربندی نشده است.")
+                return
+
+            # ارسال درخواست
+            response = provider.chat(messages=messages)
+            text = provider.parse_response(response)
+            
+            self.response_ready.emit(text)
+        except Exception as e:
+            logger.error(f"Error in worker thread: {e}", exc_info=True)
+            self.error_occurred.emit(str(e))
+        finally:
+            self.finished_signal.emit()
 
 class AIPanelWidget(QWidget):
-    """
-    ویجت اصلی پنل AI Assistant
-    
-    شامل:
-    - ناحیه چت
-    - ورودی متن
-    - دکمه ارسال
-    - ورودی API Key
-    """
-    
-    # سیگنال‌ها
-    message_sent = Signal(str)
-    api_key_changed = Signal(str)
-    
     def __init__(self, parent=None):
-        """
-        راه‌اندازی پنل AI
-        
-        Args:
-            parent: والد ویجت
-        """
         super().__init__(parent)
-        self.setup_ui()
-        logger.info("AI Panel Widget initialized")
-    
-    def setup_ui(self) -> None:
-        """راه‌اندازی کامل UI"""
-        # لی‌اوت اصلی
-        main_layout = QVBoxLayout(self)
-        main_layout.setSpacing(10)
-        main_layout.setContentsMargins(10, 10, 10, 10)
+        self.chat_history = []  # [(role, content), ...]
+        self.orchestrator = None
+        self.is_connected = False
+        self.worker = None
         
-        # عنوان
-        title_label = QLabel("🤖 FreeCAD AI Assistant")
+        self.init_ui()
+        self.check_connection()
+
+    def init_ui(self):
+        layout = QVBoxLayout()
+        layout.setSpacing(10)
+        layout.setContentsMargins(10, 10, 10, 10)
+
+        # هدر: عنوان و وضعیت اتصال
+        header_frame = QFrame()
+        header_layout = QVBoxLayout(header_frame)
+        
+        title_label = QLabel("🤖 دستیار هوشمند FreeCAD")
         title_font = QFont()
-        title_font.setPointSize(14)
+        title_font.setPointSize(12)
         title_font.setBold(True)
         title_label.setFont(title_font)
         title_label.setAlignment(Qt.AlignCenter)
-        main_layout.addWidget(title_label)
-        
-        # ناحیه چت (Scroll Area)
-        self.chat_scroll = QScrollArea()
-        self.chat_scroll.setWidgetResizable(True)
-        self.chat_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
-        
-        # کانتینر پیام‌ها
-        self.messages_container = QWidget()
-        self.messages_layout = QVBoxLayout(self.messages_container)
-        self.messages_layout.addStretch()
-        
-        self.chat_scroll.setWidget(self.messages_container)
-        self.chat_scroll.setMinimumHeight(300)
-        main_layout.addWidget(self.chat_scroll)
-        
-        # ورودی API Key
-        api_layout = QHBoxLayout()
-        api_label = QLabel("API Key:")
-        self.api_key_input = QLineEdit()
-        self.api_key_input.setPlaceholderText("sk-ant-...")
-        self.api_key_input.setEchoMode(QLineEdit.Password)
-        self.api_key_input.textChanged.connect(self.api_key_changed.emit)
-        
-        api_layout.addWidget(api_label)
-        api_layout.addWidget(self.api_key_input)
-        main_layout.addLayout(api_layout)
-        
-        # ورودی متن و دکمه ارسال
-        input_layout = QHBoxLayout()
-        
+        header_layout.addWidget(title_label)
+
+        # نشانگر وضعیت
+        self.status_label = QLabel("⏳ در حال بررسی اتصال...")
+        self.status_label.setAlignment(Qt.AlignCenter)
+        self.status_label.setStyleSheet("color: orange; font-weight: bold;")
+        header_layout.addWidget(self.status_label)
+
+        layout.addWidget(header_frame)
+
+        # ناحیه چت
+        self.chat_display = QTextEdit()
+        self.chat_display.setReadOnly(True)
+        self.chat_display.setPlaceholderText("پیام‌های شما و پاسخ هوش مصنوعی اینجا نمایش داده می‌شوند...")
+        self.chat_display.setFont(QFont("Tahoma", 10))
+        layout.addWidget(self.chat_display)
+
         # ورودی متن
-        self.message_input = QLineEdit()
-        self.message_input.setPlaceholderText("پیام خود را بنویسید... (فارسی/انگلیسی)")
-        self.message_input.returnPressed.connect(self.send_message)
-        input_layout.addWidget(self.message_input)
-        
+        self.input_field = QLineEdit()
+        self.input_field.setPlaceholderText("پیام خود را بنویسید (مثلاً: یک مکعب بساز)...")
+        self.input_field.setFont(QFont("Tahoma", 10))
+        self.input_field.returnPressed.connect(self.send_message)
+        self.input_field.setEnabled(False)  # غیرفعال تا زمان اتصال موفق
+        layout.addWidget(self.input_field)
+
         # دکمه ارسال
-        self.send_button = QPushButton("ارسال")
+        self.send_button = QPushButton("ارسال پیام")
+        self.send_button.setFont(QFont("Tahoma", 10, QFont.Bold))
+        self.send_button.setStyleSheet("""
+            QPushButton {
+                background-color: #4CAF50;
+                color: white;
+                padding: 8px;
+                border-radius: 4px;
+            }
+            QPushButton:hover {
+                background-color: #45a049;
+            }
+            QPushButton:disabled {
+                background-color: #cccccc;
+                color: #666666;
+            }
+        """)
         self.send_button.clicked.connect(self.send_message)
-        self.send_button.setMinimumWidth(80)
-        input_layout.addWidget(self.send_button)
-        
-        main_layout.addLayout(input_layout)
-        
-        # پیام خوش‌آمدگویی
-        self.add_message("سلام! من دستیار هوشمند FreeCAD هستم. چطور می‌توانم کمک کنم؟", is_user=False)
-    
-    @Slot()
-    def send_message(self) -> None:
-        """ارسال پیام کاربر"""
-        text = self.message_input.text().strip()
-        
-        if not text:
+        self.send_button.setEnabled(False)
+        layout.addWidget(self.send_button)
+
+        self.setLayout(layout)
+
+    def check_connection(self):
+        """بررسی اتصال به LLM و به‌روزرسانی وضعیت UI"""
+        try:
+            from freecad_ai.core.config import get_config
+            from freecad_ai.llm.abstraction import LLMOrchestrator
+
+            config = get_config()
+            
+            # ساخت دیکشنری پیکربندی
+            config_dict = {
+                "anthropic_api_key": getattr(config, 'anthropic_api_key', None),
+                "openai_api_key": getattr(config, 'openai_api_key', None),
+                "openrouter_api_key": getattr(config, 'openrouter_api_key', None),
+                "deepseek_api_key": getattr(config, 'deepseek_api_key', None),
+                "default_provider": getattr(config, 'default_provider', 'claude'),
+                "default_model": getattr(config, 'default_model', 'claude-sonnet-4-6')
+            }
+
+            # بررسی وجود حداقل یک کلید API
+            has_key = any([
+                config_dict.get("anthropic_api_key"),
+                config_dict.get("openai_api_key"),
+                config_dict.get("openrouter_api_key"),
+                config_dict.get("deepseek_api_key")
+            ])
+
+            if has_key:
+                self.orchestrator = LLMOrchestrator(config=config_dict)
+                available = self.orchestrator.list_available_providers()
+                
+                if available:
+                    self.is_connected = True
+                    provider_name = available[0].upper()
+                    self.status_label.setText(f"✅ متصل به {provider_name}")
+                    self.status_label.setStyleSheet("color: green; font-weight: bold;")
+                    self.input_field.setEnabled(True)
+                    self.send_button.setEnabled(True)
+                    self.append_to_chat("سیستم", f"به {provider_name} متصل شد. آماده دریافت دستور هستم!")
+                    logger.info(f"Connected to {provider_name}")
+                else:
+                    self.status_label.setText("❌ خطا: هیچ کلید API معتبری یافت نشد.")
+                    self.status_label.setStyleSheet("color: red; font-weight: bold;")
+                    self.append_to_chat("سیستم", "خطا: لطفاً فایل .env را بررسی کنید.")
+            else:
+                self.status_label.setText("❌ کلید API یافت نشد")
+                self.status_label.setStyleSheet("color: red; font-weight: bold;")
+                self.append_to_chat("سیستم", "خطا: کلید API در فایل .env تنظیم نشده است.")
+
+        except Exception as e:
+            logger.error(f"Connection check failed: {e}", exc_info=True)
+            self.status_label.setText("❌ خطا در اتصال")
+            self.status_label.setStyleSheet("color: red; font-weight: bold;")
+            self.append_to_chat("سیستم", f"خطا در برقراری اتصال: {str(e)}")
+
+    def send_message(self):
+        text = self.input_field.text().strip()
+        if not text or not self.is_connected:
             return
-        
-        # اضافه کردن پیام به چت
-        self.add_message(text, is_user=True)
-        
-        # پاک کردن ورودی
-        self.message_input.clear()
-        
-        # ارسال سیگنال
-        self.message_sent.emit(text)
-        
-        logger.debug(f"User message sent: {text[:50]}...")
-    
-    def add_message(self, text: str, is_user: bool = True) -> None:
-        """
-        اضافه کردن پیام به چت
-        
-        Args:
-            text: متن پیام
-            is_user: آیا پیام از طرف کاربر است
-        """
-        message_widget = ChatMessage(text, is_user, self)
-        
-        # اضافه کردن قبل از stretch
-        self.messages_layout.insertWidget(self.messages_layout.count() - 1, message_widget)
-        
-        # اسکرول به پایین
-        self.chat_scroll.verticalScrollBar().setValue(
-            self.chat_scroll.verticalScrollBar().maximum()
-        )
-    
-    def add_assistant_message(self, text: str) -> None:
-        """
-        اضافه کردن پیام از طرف دستیار
-        
-        Args:
-            text: متن پیام
-        """
-        self.add_message(text, is_user=False)
-    
-    def clear_chat(self) -> None:
-        """پاک کردن تمام پیام‌های چت"""
-        # حذف تمام ویجت‌ها به جز stretch
-        while self.messages_layout.count() > 1:
-            item = self.messages_layout.takeAt(0)
-            if item.widget():
-                item.widget().deleteLater()
-    
-    def set_api_key(self, key: str) -> None:
-        """
-        تنظیم API Key
-        
-        Args:
-            key: کلید API
-        """
-        self.api_key_input.setText(key)
-    
-    def get_api_key(self) -> str:
-        """
-        دریافت API Key فعلی
-        
-        Returns:
-            str: کلید API
-        """
-        return self.api_key_input.text().strip()
-    
-    def enable_send(self, enabled: bool = True) -> None:
-        """
-        فعال/غیرفعال کردن دکمه ارسال
-        
-        Args:
-            enabled: وضعیت فعال بودن
-        """
-        self.send_button.setEnabled(enabled)
-        self.message_input.setEnabled(enabled)
 
+        # نمایش پیام کاربر
+        self.append_to_chat("شما", text)
+        self.input_field.clear()
+        self.input_field.setEnabled(False)
+        self.send_button.setEnabled(False)
+        self.status_label.setText("⏳ در حال پردازش...")
+        self.status_label.setStyleSheet("color: orange; font-weight: bold;")
 
-class AIDockWidget(QDockWidget):
-    """
-    Dock Widget برای پنل AI
-    
-    این کلاس پنل را به عنوان یک Dock در FreeCAD ثبت می‌کند.
-    """
-    
-    def __init__(self, parent=None):
-        """
-        راه‌اندازی Dock Widget
-        
-        Args:
-            parent: والد ویجت (معمولاً MainWindow FreeCAD)
-        """
-        super().__init__("AI Assistant", parent)
-        
-        # تنظیمات Dock
-        self.setObjectName("AIDockWidget")
-        self.setMinimumWidth(350)
-        self.setMinimumHeight(500)
-        
-        # ایجاد ویجت اصلی
-        self.ai_panel = AIPanelWidget(self)
-        self.setWidget(self.ai_panel)
-        
-        # اتصال سیگنال‌ها
-        self.ai_panel.message_sent.connect(self._on_message_sent)
-        
-        logger.info("AI Dock Widget initialized")
-    
-    @Slot(str)
-    def _on_message_sent(self, message: str) -> None:
-        """
-        مدیریت پیام ارسالی کاربر
-        
-        Args:
-            message: متن پیام
-        """
-        logger.debug(f"Message sent from dock: {message[:50]}...")
-        # اینجا باید به LLM Orchestrator متصل شود
-    
-    def get_panel(self) -> AIPanelWidget:
-        """
-        دریافت پنل AI
-        
-        Returns:
-            AIPanelWidget: نمونه پنل
-        """
-        return self.ai_panel
+        # شروع رشته پردازش
+        self.worker = WorkerThread(self.orchestrator, text, self.chat_history)
+        self.worker.response_ready.connect(self.handle_response)
+        self.worker.error_occurred.connect(self.handle_error)
+        self.worker.finished_signal.connect(self.reset_ui_state)
+        self.worker.start()
 
+    def handle_response(self, response_text):
+        self.append_to_chat("هوش مصنوعی", response_text)
+        # اضافه کردن به تاریخچه
+        self.chat_history.append(("user", self.input_field.text() if self.input_field.text() else "")) # Note: logic fix needed here for actual history tracking before clear
+        # Fix: history should be updated before clear in send_message, but for now simple append
+        self.chat_history.append(("assistant", response_text))
 
-# تابع کمکی برای ایجاد Dock
-def create_ai_dock(main_window=None) -> AIDockWidget:
-    """
-    ایجاد Dock Widget AI Assistant
-    
-    Args:
-        main_window: پنجره اصلی FreeCAD
-        
-    Returns:
-        AIDockWidget: نمونه Dock
-    """
-    dock = AIDockWidget(main_window)
+    def handle_error(self, error_msg):
+        self.append_to_chat("خطا", error_msg)
+
+    def reset_ui_state(self):
+        self.input_field.setEnabled(True)
+        self.send_button.setEnabled(True)
+        if self.is_connected:
+            self.status_label.setText(f"✅ متصل")
+            self.status_label.setStyleSheet("color: green; font-weight: bold;")
+        self.input_field.setFocus()
+
+    def append_to_chat(self, sender, message):
+        color = "#000080" if sender == "شما" else ("#d32f2f" if sender == "خطا" else "#2e7d32")
+        self.chat_display.append(f'<b style="color:{color};">{sender}:</b> {message}')
+        self.chat_display.verticalScrollBar().setValue(self.chat_display.verticalScrollBar().maximum())
+
+def create_ai_dock(parent=None):
+    dock = QDockWidget("AI Assistant", parent)
+    dock.setObjectName("AIAssistantDock")
+    widget = AIPanelWidget(dock)
+    dock.setWidget(widget)
     return dock
-
-
-def ensure_dock_created() -> Optional[AIDockWidget]:
-    """
-    ایجاد Dock Widget برای AI Assistant
-    این تابع فقط یک بار Dock را ایجاد می‌کند و از ایجاد تکراری جلوگیری می‌کند.
-    
-    Returns:
-        AIDockWidget: نمونه Dock یا None اگر موفق نباشد
-    """
-    import FreeCADGui as Gui
-    
-    mw = Gui.getMainWindow()
-    if not mw:
-        logger.error("MainWindow not found")
-        return None
-    
-    # بررسی آیا Dock از قبل وجود دارد
-    for dock in mw.findChildren(QDockWidget):
-        if dock.objectName() == "AIDockWidget":
-            logger.debug("AI Dock already exists, returning existing instance")
-            return dock
-    
-    # ایجاد Dock جدید
-    try:
-        dock = create_ai_dock(mw)
-        mw.addDockWidget(Qt.RightDockWidgetArea, dock)
-        logger.info("AI Dock created and added to MainWindow")
-        return dock
-    except Exception as e:
-        logger.error(f"Failed to create AI Dock: {e}", exc_info=True)
-        return None

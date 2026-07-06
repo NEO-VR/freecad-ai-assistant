@@ -1,148 +1,62 @@
 """
-FreeCAD AI Assistant - Core Configuration Module
-
-این ماژول پیکربندی اصلی پروژه را مدیریت می‌کند.
+FreeCAD AI Assistant - Configuration
+مدیریت تنظیمات و کلیدهای API با استفاده از Pydantic
 """
-
 import os
-from typing import Optional, Dict, Any
-from dataclasses import dataclass, field
+import logging
 from dotenv import load_dotenv
+from pydantic import BaseSettings, Field
 
+logger = logging.getLogger("FreeCAD_AI_Config")
 
-@dataclass
-class Config:
+# بارگذاری متغیرهای محیطی از فایل .env
+load_dotenv()
+
+class Config(BaseSettings):
     """
-    کلاس پیکربندی پروژه FreeCAD AI Assistant
+    کلاس پیکربندی اصلی
     
     Attributes:
-        anthropic_api_key: کلید API برای Claude
-        openai_api_key: کلید API برای OpenAI
-        openrouter_api_key: کلید API برای OpenRouter
-        deepseek_api_key: کلید API برای DeepSeek
-        default_provider: provider پیش‌فرض (anthropic)
+        anthropic_api_key: کلید API Anthropic (Claude)
+        openai_api_key: کلید API OpenAI
+        default_provider: ارائه‌دهنده پیش‌فرض (claude, openai, ...)
         default_model: مدل پیش‌فرض
-        language: زبان رابط کاربری (fa/en)
-        debug_mode: حالت دیباگ
     """
+    anthropic_api_key: str = Field(default="", env="ANTHROPIC_API_KEY")
+    openai_api_key: str = Field(default="", env="OPENAI_API_KEY")
+    openrouter_api_key: str = Field(default="", env="OPENROUTER_API_KEY")
+    deepseek_api_key: str = Field(default="", env="DEEPSEEK_API_KEY")
     
-    # API Keys
-    anthropic_api_key: Optional[str] = None
-    openai_api_key: Optional[str] = None
-    openrouter_api_key: Optional[str] = None
-    deepseek_api_key: Optional[str] = None
+    default_provider: str = Field(default="claude", env="DEFAULT_PROVIDER")
+    default_model: str = Field(default="claude-sonnet-4-6", env="DEFAULT_MODEL")
     
-    # Settings
-    default_provider: str = "anthropic"
-    default_model: str = "claude-3-sonnet-20240229"
-    language: str = "fa"
-    debug_mode: bool = False
-    
-    # Transaction settings
-    max_transaction_time: int = 30  # seconds
-    max_context_size: int = 10000  # characters
-    
-    @classmethod
-    def from_env(cls) -> "Config":
-        """
-        ساخت پیکربندی از متغیرهای محیطی
-        
-        Returns:
-            Config: نمونه پیکربندی
-        """
-        # بارگذاری فایل .env
-        load_dotenv()
-        
-        config = cls(
-            anthropic_api_key=os.getenv("ANTHROPIC_API_KEY"),
-            openai_api_key=os.getenv("OPENAI_API_KEY"),
-            openrouter_api_key=os.getenv("OPENROUTER_API_KEY"),
-            deepseek_api_key=os.getenv("DEEPSEEK_API_KEY"),
-            default_provider=os.getenv("FREECAD_AI_DEFAULT_PROVIDER", "anthropic"),
-            default_model=os.getenv("FREECAD_AI_DEFAULT_MODEL", "claude-3-sonnet-20240229"),
-            language=os.getenv("FREECAD_AI_LANGUAGE", "fa"),
-            debug_mode=os.getenv("FREECAD_AI_DEBUG", "false").lower() == "true"
-        )
-        
-        return config
-    
-    def is_provider_available(self, provider: str) -> bool:
-        """
-        بررسی در دسترس بودن یک provider
-        
-        Args:
-            provider: نام provider
-            
-        Returns:
-            bool: True اگر API key موجود باشد
-        """
-        key_map = {
-            "anthropic": self.anthropic_api_key,
-            "openai": self.openai_api_key,
-            "openrouter": self.openrouter_api_key,
-            "deepseek": self.deepseek_api_key
-        }
-        
-        return bool(key_map.get(provider))
-    
-    def get_available_providers(self) -> list[str]:
-        """
-        دریافت لیست providerهای در دسترس
-        
-        Returns:
-            list[str]: لیست نام providerها
-        """
-        available = []
-        for provider in ["anthropic", "openai", "openrouter", "deepseek"]:
-            if self.is_provider_available(provider):
-                available.append(provider)
-        
-        return available
-    
-    def to_dict(self) -> Dict[str, Any]:
-        """
-        تبدیل پیکربندی به دیکشنری
-        
-        Returns:
-            Dict[str, Any]: دیکشنری پیکربندی (بدون API keys)
-        """
-        return {
-            "default_provider": self.default_provider,
-            "default_model": self.default_model,
-            "language": self.language,
-            "debug_mode": self.debug_mode,
-            "max_transaction_time": self.max_transaction_time,
-            "max_context_size": self.max_context_size,
-            "available_providers": self.get_available_providers()
-        }
+    class Config:
+        env_file = ".env"
+        env_file_encoding = "utf-8"
 
-
-# نمونه جهانی پیکربندی
-_global_config: Optional[Config] = None
-
+# نمونه_singleton برای دسترسی آسان
+_config_instance = None
 
 def get_config() -> Config:
     """
-    دریافت نمونه جهانی پیکربندی
+    دریافت نمونه پیکربندی (Singleton)
     
     Returns:
         Config: نمونه پیکربندی
     """
-    global _global_config
-    
-    if _global_config is None:
-        _global_config = Config.from_env()
-    
-    return _global_config
-
-
-def reload_config() -> Config:
-    """
-    بارگذاری مجدد پیکربندی از محیط
-    
-    Returns:
-        Config: نمونه پیکربندی جدید
-    """
-    global _global_config
-    _global_config = Config.from_env()
-    return _global_config
+    global _config_instance
+    if _config_instance is None:
+        try:
+            _config_instance = Config()
+            logger.info("Configuration loaded successfully")
+            
+            # لاگ امن (بدون نمایش کلید کامل)
+            if _config_instance.anthropic_api_key:
+                logger.debug(f"Anthropic Key found: {_config_instance.anthropic_api_key[:5]}...")
+            if _config_instance.openai_api_key:
+                logger.debug(f"OpenAI Key found: {_config_instance.openai_api_key[:5]}...")
+                
+        except Exception as e:
+            logger.error(f"Failed to load configuration: {e}", exc_info=True)
+            raise
+    return _config_instance
